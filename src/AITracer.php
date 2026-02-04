@@ -7,6 +7,7 @@ namespace AITracer;
 use AITracer\Http\HttpClient;
 use AITracer\Wrappers\OpenAIWrapper;
 use AITracer\Wrappers\AnthropicWrapper;
+use AITracer\Wrappers\GeminiWrapper;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -113,6 +114,18 @@ class AITracer
     public function wrapAnthropic(object $client): AnthropicWrapper
     {
         return new AnthropicWrapper($client, $this);
+    }
+
+    /**
+     * Wrap a Google Gemini model for automatic logging.
+     *
+     * @param object $model Gemini GenerativeModel instance
+     * @param string|null $modelName Optional model name override
+     * @return GeminiWrapper
+     */
+    public function wrapGemini(object $model, ?string $modelName = null): GeminiWrapper
+    {
+        return new GeminiWrapper($model, $this, $modelName);
     }
 
     /**
