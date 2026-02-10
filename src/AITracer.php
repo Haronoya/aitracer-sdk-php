@@ -233,7 +233,6 @@ class AITracer
      *     status?: string,
      *     error_message?: string,
      *     metadata?: array,
-     *     tags?: array<string>,
      *     trace_id?: string,
      *     span_id?: string,
      *     parent_span_id?: string,
@@ -274,7 +273,6 @@ class AITracer
             'status' => $data['status'] ?? 'success',
             'error_message' => $data['error_message'] ?? null,
             'metadata' => $data['metadata'] ?? [],
-            'tags' => $data['tags'] ?? [],
             'span_id' => $data['span_id'] ?? $this->generateSpanId(),
             'parent_span_id' => $data['parent_span_id'] ?? null,
             'session_id' => $data['session_id'] ?? null,
@@ -288,10 +286,6 @@ class AITracer
             $entry['metadata'] = array_merge(
                 $entry['metadata'],
                 $this->currentTrace->getMetadata()
-            );
-            $entry['tags'] = array_merge(
-                $entry['tags'],
-                $this->currentTrace->getTags()
             );
         } elseif (isset($data['trace_id'])) {
             $entry['trace_id'] = $data['trace_id'];
@@ -435,7 +429,6 @@ class AITracer
             $this->httpClient->patch('/api/v1/sessions/' . $session->getSessionId() . '/', [
                 'ended_at' => date('c'),
                 'metadata' => $session->getMetadata(),
-                'tags' => $session->getTags(),
             ]);
         } catch (\Exception $e) {
             $this->logger->error('Failed to end session: ' . $e->getMessage());

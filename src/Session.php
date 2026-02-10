@@ -32,7 +32,6 @@ class Session
     private ?string $userId;
     private ?string $name;
     private array $metadata;
-    private array $tags;
     private ?AITracer $tracer;
     private string $startedAt;
     private ?string $lastLogId = null;
@@ -54,7 +53,6 @@ class Session
         $this->userId = $options['user_id'] ?? null;
         $this->name = $options['name'] ?? null;
         $this->metadata = $options['metadata'] ?? [];
-        $this->tags = [];
         $this->tracer = $tracer;
         $this->startedAt = date('c');
     }
@@ -92,29 +90,11 @@ class Session
     }
 
     /**
-     * Get the tags.
-     */
-    public function getTags(): array
-    {
-        return $this->tags;
-    }
-
-    /**
      * Set a metadata value.
      */
     public function setMetadata(string $key, mixed $value): void
     {
         $this->metadata[$key] = $value;
-    }
-
-    /**
-     * Add a tag to the session.
-     */
-    public function addTag(string $tag): void
-    {
-        if (!in_array($tag, $this->tags, true)) {
-            $this->tags[] = $tag;
-        }
     }
 
     /**
@@ -150,7 +130,6 @@ class Session
      *     log_id?: string,
      *     score?: int|float,
      *     comment?: string,
-     *     tags?: array<string>,
      * } $options
      */
     public function feedback(string $feedbackType, array $options = []): void
@@ -171,7 +150,6 @@ class Session
             'log_id' => $options['log_id'] ?? $this->lastLogId,
             'score' => $score,
             'comment' => $options['comment'] ?? null,
-            'tags' => $options['tags'] ?? [],
             'user_id' => $this->userId,
             'timestamp' => date('c'),
         ];
