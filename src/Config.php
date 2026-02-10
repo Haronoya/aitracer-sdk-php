@@ -98,7 +98,7 @@ class Config
      */
     public function getEndpoint(string $path): string
     {
-        return $this->baseUrl . '/api' . $path;
+        return $this->baseUrl . $path;
     }
 
     /**
