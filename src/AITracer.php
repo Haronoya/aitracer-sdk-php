@@ -295,6 +295,9 @@ class AITracer
             );
         } elseif (isset($data['trace_id'])) {
             $entry['trace_id'] = $data['trace_id'];
+        } else {
+            // Auto-generate trace_id if not provided
+            $entry['trace_id'] = $this->generateUuid();
         }
 
         // Add session context if available
@@ -341,6 +344,18 @@ class AITracer
     private function generateSpanId(): string
     {
         return bin2hex(random_bytes(8));
+    }
+
+    /**
+     * Generate a UUID v4.
+     */
+    private function generateUuid(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40); // Version 4
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80); // Variant RFC 4122
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
     /**
