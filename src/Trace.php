@@ -12,7 +12,6 @@ class Trace
     private string $id;
     private ?string $name;
     private array $metadata = [];
-    private array $tags = [];
     private float $startTime;
 
     public function __construct(?string $id = null, ?string $name = null)
@@ -75,44 +74,6 @@ class Trace
     public function getMetadata(): array
     {
         return $this->metadata;
-    }
-
-    /**
-     * Add a single tag.
-     *
-     * @param string $tag
-     * @return $this
-     */
-    public function addTag(string $tag): self
-    {
-        if (!in_array($tag, $this->tags, true)) {
-            $this->tags[] = $tag;
-        }
-        return $this;
-    }
-
-    /**
-     * Add multiple tags.
-     *
-     * @param array<string> $tags
-     * @return $this
-     */
-    public function addTags(array $tags): self
-    {
-        foreach ($tags as $tag) {
-            $this->addTag($tag);
-        }
-        return $this;
-    }
-
-    /**
-     * Get trace tags.
-     *
-     * @return array<string>
-     */
-    public function getTags(): array
-    {
-        return $this->tags;
     }
 
     /**

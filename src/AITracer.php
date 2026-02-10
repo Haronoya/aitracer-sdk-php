@@ -7,6 +7,7 @@ namespace AITracer;
 use AITracer\Http\HttpClient;
 use AITracer\Wrappers\OpenAIWrapper;
 use AITracer\Wrappers\AnthropicWrapper;
+use AITracer\Wrappers\GeminiWrapper;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -116,6 +117,18 @@ class AITracer
     }
 
     /**
+     * Wrap a Google Gemini model for automatic logging.
+     *
+     * @param object $model Gemini GenerativeModel instance
+     * @param string|null $modelName Optional model name override
+     * @return GeminiWrapper
+     */
+    public function wrapGemini(object $model, ?string $modelName = null): GeminiWrapper
+    {
+        return new GeminiWrapper($model, $this, $modelName);
+    }
+
+    /**
      * Create a trace context for grouping related API calls.
      *
      * @param string|null $traceId Custom trace ID (auto-generated if null)
@@ -220,7 +233,6 @@ class AITracer
      *     status?: string,
      *     error_message?: string,
      *     metadata?: array,
-     *     tags?: array<string>,
      *     trace_id?: string,
      *     span_id?: string,
      *     parent_span_id?: string,
@@ -261,7 +273,6 @@ class AITracer
             'status' => $data['status'] ?? 'success',
             'error_message' => $data['error_message'] ?? null,
             'metadata' => $data['metadata'] ?? [],
-            'tags' => $data['tags'] ?? [],
             'span_id' => $data['span_id'] ?? $this->generateSpanId(),
             'parent_span_id' => $data['parent_span_id'] ?? null,
             'session_id' => $data['session_id'] ?? null,
@@ -276,12 +287,11 @@ class AITracer
                 $entry['metadata'],
                 $this->currentTrace->getMetadata()
             );
-            $entry['tags'] = array_merge(
-                $entry['tags'],
-                $this->currentTrace->getTags()
-            );
         } elseif (isset($data['trace_id'])) {
             $entry['trace_id'] = $data['trace_id'];
+        } else {
+            // Auto-generate trace_id if not provided
+            $entry['trace_id'] = $this->generateUuid();
         }
 
         // Add session context if available
@@ -328,6 +338,18 @@ class AITracer
     private function generateSpanId(): string
     {
         return bin2hex(random_bytes(8));
+    }
+
+    /**
+     * Generate a UUID v4.
+     */
+    private function generateUuid(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40); // Version 4
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80); // Variant RFC 4122
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
     /**
@@ -407,7 +429,6 @@ class AITracer
             $this->httpClient->patch('/api/v1/sessions/' . $session->getSessionId() . '/', [
                 'ended_at' => date('c'),
                 'metadata' => $session->getMetadata(),
-                'tags' => $session->getTags(),
             ]);
         } catch (\Exception $e) {
             $this->logger->error('Failed to end session: ' . $e->getMessage());
