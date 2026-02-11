@@ -18,6 +18,7 @@ class Config
 
     public readonly string $apiKey;
     public readonly string $project;
+    public readonly ?string $userId;
     public readonly string $baseUrl;
     public readonly bool $sync;
     public bool $enabled;
@@ -33,6 +34,7 @@ class Config
      * @param array{
      *     api_key?: string,
      *     project?: string,
+     *     user_id?: string,
      *     base_url?: string,
      *     sync?: bool,
      *     enabled?: bool,
@@ -60,6 +62,10 @@ class Config
             ?: throw new InvalidArgumentException(
                 'Project is required. Set via options or AITRACER_PROJECT environment variable.'
             );
+
+        // User ID (optional)
+        $userId = $options['user_id'] ?? getenv('AITRACER_USER_ID') ?: null;
+        $this->userId = $userId !== false ? $userId : null;
 
         // Validate API key format
         if (!str_starts_with($this->apiKey, 'at-')) {

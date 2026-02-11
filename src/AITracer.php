@@ -261,6 +261,9 @@ class AITracer
      */
     private function buildLogEntry(array $data): array
     {
+        // Use tracer-level user_id as default
+        $appUserId = $data['app_user_id'] ?? $data['user_id'] ?? $this->config->userId;
+
         $entry = [
             'project' => $this->config->project,
             'model' => $data['model'] ?? 'unknown',
@@ -276,7 +279,7 @@ class AITracer
             'span_id' => $data['span_id'] ?? $this->generateSpanId(),
             'parent_span_id' => $data['parent_span_id'] ?? null,
             'session_id' => $data['session_id'] ?? null,
-            'user_id' => $data['user_id'] ?? null,
+            'app_user_id' => $appUserId,
             'timestamp' => date('c'),
         ];
 
@@ -297,7 +300,10 @@ class AITracer
         // Add session context if available
         if ($this->currentSession !== null) {
             $entry['session_id'] = $entry['session_id'] ?? $this->currentSession->getSessionId();
-            $entry['user_id'] = $entry['user_id'] ?? $this->currentSession->getUserId();
+            // Session user_id takes precedence over tracer-level user_id
+            if ($this->currentSession->getUserId() !== null) {
+                $entry['app_user_id'] = $this->currentSession->getUserId();
+            }
 
             // Update last log ID for feedback association
             $this->currentSession->setLastLogId($entry['span_id']);
