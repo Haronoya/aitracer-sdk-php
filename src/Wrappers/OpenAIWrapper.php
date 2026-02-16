@@ -57,6 +57,14 @@ class OpenAIWrapper
     }
 
     /**
+     * Get the audio wrapper (Whisper API).
+     */
+    public function audio(): AudioWrapper
+    {
+        return new AudioWrapper($this->client->audio(), $this->tracer);
+    }
+
+    /**
      * Forward other method calls to the original client.
      *
      * @param string $name
@@ -474,5 +482,334 @@ class StreamWrapper implements \IteratorAggregate
         } finally {
             ($this->onComplete)($this->chunks);
         }
+    }
+}
+
+/**
+ * Wrapper for audio API (Whisper).
+ */
+class AudioWrapper
+{
+    private object $audio;
+    private AITracer $tracer;
+
+    public function __construct(object $audio, AITracer $tracer)
+    {
+        $this->audio = $audio;
+        $this->tracer = $tracer;
+    }
+
+    /**
+     * Get transcriptions interface.
+     */
+    public function transcriptions(): AudioTranscriptionsWrapper
+    {
+        return new AudioTranscriptionsWrapper($this->audio->transcriptions(), $this->tracer);
+    }
+
+    /**
+     * Get translations interface.
+     */
+    public function translations(): AudioTranslationsWrapper
+    {
+        return new AudioTranslationsWrapper($this->audio->translations(), $this->tracer);
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return $this->audio->$name(...$arguments);
+    }
+}
+
+/**
+ * Wrapper for audio.transcriptions.create() (Whisper).
+ */
+class AudioTranscriptionsWrapper
+{
+    private object $transcriptions;
+    private AITracer $tracer;
+
+    public function __construct(object $transcriptions, AITracer $tracer)
+    {
+        $this->transcriptions = $transcriptions;
+        $this->tracer = $tracer;
+    }
+
+    /**
+     * Create a transcription with automatic logging.
+     *
+     * @param array $parameters
+     * @return mixed
+     */
+    public function create(array $parameters): mixed
+    {
+        $startTime = microtime(true);
+        $error = null;
+        $response = null;
+
+        try {
+            $response = $this->transcriptions->create($parameters);
+            return $response;
+        } catch (Throwable $e) {
+            $error = $e;
+            throw $e;
+        } finally {
+            $this->logCall($parameters, $response, $startTime, $error);
+        }
+    }
+
+    /**
+     * Log a transcription call.
+     */
+    private function logCall(array $parameters, mixed $response, float $startTime, ?Throwable $error): void
+    {
+        $latencyMs = (int) ((microtime(true) - $startTime) * 1000);
+
+        // Get file info
+        $fileInfo = $this->getFileInfo($parameters['file'] ?? null);
+
+        $logData = [
+            'model' => $parameters['model'] ?? 'whisper-1',
+            'provider' => 'openai',
+            'input' => [
+                'type' => 'audio_transcription',
+                'file_name' => $fileInfo['name'],
+                'file_size_bytes' => $fileInfo['size'],
+                'language' => $parameters['language'] ?? null,
+            ],
+            'latency_ms' => $latencyMs,
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+        ];
+
+        if ($error !== null) {
+            $logData['status'] = 'error';
+            $logData['error_message'] = $error->getMessage();
+            $logData['output'] = [];
+        } else {
+            $logData['status'] = 'success';
+            $text = $this->extractText($response);
+            $logData['output'] = [
+                'text' => $text,
+                'text_length' => strlen($text),
+            ];
+        }
+
+        $this->tracer->log($logData);
+    }
+
+    /**
+     * Extract text from response.
+     */
+    private function extractText(mixed $response): string
+    {
+        if ($response === null) {
+            return '';
+        }
+
+        if (is_object($response) && isset($response->text)) {
+            return $response->text;
+        }
+
+        if (is_array($response) && isset($response['text'])) {
+            return $response['text'];
+        }
+
+        if (is_string($response)) {
+            return $response;
+        }
+
+        return '';
+    }
+
+    /**
+     * Get file info from file parameter.
+     */
+    private function getFileInfo(mixed $file): array
+    {
+        $info = ['name' => null, 'size' => null];
+
+        if ($file === null) {
+            return $info;
+        }
+
+        // Handle SplFileInfo
+        if ($file instanceof \SplFileInfo) {
+            $info['name'] = $file->getFilename();
+            $info['size'] = $file->getSize();
+            return $info;
+        }
+
+        // Handle resource (fopen)
+        if (is_resource($file)) {
+            $meta = stream_get_meta_data($file);
+            if (isset($meta['uri'])) {
+                $info['name'] = basename($meta['uri']);
+                if (file_exists($meta['uri'])) {
+                    $info['size'] = filesize($meta['uri']);
+                }
+            }
+            return $info;
+        }
+
+        // Handle string (file path)
+        if (is_string($file) && file_exists($file)) {
+            $info['name'] = basename($file);
+            $info['size'] = filesize($file);
+            return $info;
+        }
+
+        return $info;
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return $this->transcriptions->$name(...$arguments);
+    }
+}
+
+/**
+ * Wrapper for audio.translations.create() (Whisper).
+ */
+class AudioTranslationsWrapper
+{
+    private object $translations;
+    private AITracer $tracer;
+
+    public function __construct(object $translations, AITracer $tracer)
+    {
+        $this->translations = $translations;
+        $this->tracer = $tracer;
+    }
+
+    /**
+     * Create a translation with automatic logging.
+     *
+     * @param array $parameters
+     * @return mixed
+     */
+    public function create(array $parameters): mixed
+    {
+        $startTime = microtime(true);
+        $error = null;
+        $response = null;
+
+        try {
+            $response = $this->translations->create($parameters);
+            return $response;
+        } catch (Throwable $e) {
+            $error = $e;
+            throw $e;
+        } finally {
+            $this->logCall($parameters, $response, $startTime, $error);
+        }
+    }
+
+    /**
+     * Log a translation call.
+     */
+    private function logCall(array $parameters, mixed $response, float $startTime, ?Throwable $error): void
+    {
+        $latencyMs = (int) ((microtime(true) - $startTime) * 1000);
+
+        // Get file info
+        $fileInfo = $this->getFileInfo($parameters['file'] ?? null);
+
+        $logData = [
+            'model' => $parameters['model'] ?? 'whisper-1',
+            'provider' => 'openai',
+            'input' => [
+                'type' => 'audio_translation',
+                'file_name' => $fileInfo['name'],
+                'file_size_bytes' => $fileInfo['size'],
+            ],
+            'latency_ms' => $latencyMs,
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+        ];
+
+        if ($error !== null) {
+            $logData['status'] = 'error';
+            $logData['error_message'] = $error->getMessage();
+            $logData['output'] = [];
+        } else {
+            $logData['status'] = 'success';
+            $text = $this->extractText($response);
+            $logData['output'] = [
+                'text' => $text,
+                'text_length' => strlen($text),
+            ];
+        }
+
+        $this->tracer->log($logData);
+    }
+
+    /**
+     * Extract text from response.
+     */
+    private function extractText(mixed $response): string
+    {
+        if ($response === null) {
+            return '';
+        }
+
+        if (is_object($response) && isset($response->text)) {
+            return $response->text;
+        }
+
+        if (is_array($response) && isset($response['text'])) {
+            return $response['text'];
+        }
+
+        if (is_string($response)) {
+            return $response;
+        }
+
+        return '';
+    }
+
+    /**
+     * Get file info from file parameter.
+     */
+    private function getFileInfo(mixed $file): array
+    {
+        $info = ['name' => null, 'size' => null];
+
+        if ($file === null) {
+            return $info;
+        }
+
+        // Handle SplFileInfo
+        if ($file instanceof \SplFileInfo) {
+            $info['name'] = $file->getFilename();
+            $info['size'] = $file->getSize();
+            return $info;
+        }
+
+        // Handle resource (fopen)
+        if (is_resource($file)) {
+            $meta = stream_get_meta_data($file);
+            if (isset($meta['uri'])) {
+                $info['name'] = basename($meta['uri']);
+                if (file_exists($meta['uri'])) {
+                    $info['size'] = filesize($meta['uri']);
+                }
+            }
+            return $info;
+        }
+
+        // Handle string (file path)
+        if (is_string($file) && file_exists($file)) {
+            $info['name'] = basename($file);
+            $info['size'] = filesize($file);
+            return $info;
+        }
+
+        return $info;
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return $this->translations->$name(...$arguments);
     }
 }
