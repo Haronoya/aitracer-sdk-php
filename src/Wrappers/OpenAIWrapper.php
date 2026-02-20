@@ -580,6 +580,9 @@ class AudioTranscriptionsWrapper
             'latency_ms' => $latencyMs,
             'input_tokens' => 0,
             'output_tokens' => 0,
+            'metadata' => [
+                'audio_duration_seconds' => $fileInfo['estimated_duration'],
+            ],
         ];
 
         if ($error !== null) {
@@ -627,7 +630,7 @@ class AudioTranscriptionsWrapper
      */
     private function getFileInfo(mixed $file): array
     {
-        $info = ['name' => null, 'size' => null];
+        $info = ['name' => null, 'size' => null, 'estimated_duration' => null];
 
         if ($file === null) {
             return $info;
@@ -637,11 +640,8 @@ class AudioTranscriptionsWrapper
         if ($file instanceof \SplFileInfo) {
             $info['name'] = $file->getFilename();
             $info['size'] = $file->getSize();
-            return $info;
-        }
-
-        // Handle resource (fopen)
-        if (is_resource($file)) {
+        } elseif (is_resource($file)) {
+            // Handle resource (fopen)
             $meta = stream_get_meta_data($file);
             if (isset($meta['uri'])) {
                 $info['name'] = basename($meta['uri']);
@@ -649,14 +649,30 @@ class AudioTranscriptionsWrapper
                     $info['size'] = filesize($meta['uri']);
                 }
             }
-            return $info;
-        }
-
-        // Handle string (file path)
-        if (is_string($file) && file_exists($file)) {
+        } elseif (is_string($file) && file_exists($file)) {
+            // Handle string (file path)
             $info['name'] = basename($file);
             $info['size'] = filesize($file);
-            return $info;
+        }
+
+        // Estimate audio duration from file size
+        // This is used for Whisper cost calculation (charged per minute)
+        if ($info['size'] !== null) {
+            $fileName = strtolower($info['name'] ?? '');
+
+            // Estimate based on typical bitrates:
+            // WAV: 16-bit 44.1kHz mono = 88.2KB/sec
+            // MP3/M4A/etc: ~128kbps = 16KB/sec
+            if (str_ends_with($fileName, '.wav')) {
+                $bytesPerSecond = 88200;
+            } elseif (preg_match('/\.(mp3|m4a|mpga|mpeg|mp4|webm|ogg)$/', $fileName)) {
+                $bytesPerSecond = 16000;
+            } else {
+                // Unknown format: assume 128kbps compressed
+                $bytesPerSecond = 16000;
+            }
+
+            $info['estimated_duration'] = $info['size'] / $bytesPerSecond;
         }
 
         return $info;
@@ -726,6 +742,9 @@ class AudioTranslationsWrapper
             'latency_ms' => $latencyMs,
             'input_tokens' => 0,
             'output_tokens' => 0,
+            'metadata' => [
+                'audio_duration_seconds' => $fileInfo['estimated_duration'],
+            ],
         ];
 
         if ($error !== null) {
@@ -773,7 +792,7 @@ class AudioTranslationsWrapper
      */
     private function getFileInfo(mixed $file): array
     {
-        $info = ['name' => null, 'size' => null];
+        $info = ['name' => null, 'size' => null, 'estimated_duration' => null];
 
         if ($file === null) {
             return $info;
@@ -783,11 +802,8 @@ class AudioTranslationsWrapper
         if ($file instanceof \SplFileInfo) {
             $info['name'] = $file->getFilename();
             $info['size'] = $file->getSize();
-            return $info;
-        }
-
-        // Handle resource (fopen)
-        if (is_resource($file)) {
+        } elseif (is_resource($file)) {
+            // Handle resource (fopen)
             $meta = stream_get_meta_data($file);
             if (isset($meta['uri'])) {
                 $info['name'] = basename($meta['uri']);
@@ -795,14 +811,30 @@ class AudioTranslationsWrapper
                     $info['size'] = filesize($meta['uri']);
                 }
             }
-            return $info;
-        }
-
-        // Handle string (file path)
-        if (is_string($file) && file_exists($file)) {
+        } elseif (is_string($file) && file_exists($file)) {
+            // Handle string (file path)
             $info['name'] = basename($file);
             $info['size'] = filesize($file);
-            return $info;
+        }
+
+        // Estimate audio duration from file size
+        // This is used for Whisper cost calculation (charged per minute)
+        if ($info['size'] !== null) {
+            $fileName = strtolower($info['name'] ?? '');
+
+            // Estimate based on typical bitrates:
+            // WAV: 16-bit 44.1kHz mono = 88.2KB/sec
+            // MP3/M4A/etc: ~128kbps = 16KB/sec
+            if (str_ends_with($fileName, '.wav')) {
+                $bytesPerSecond = 88200;
+            } elseif (preg_match('/\.(mp3|m4a|mpga|mpeg|mp4|webm|ogg)$/', $fileName)) {
+                $bytesPerSecond = 16000;
+            } else {
+                // Unknown format: assume 128kbps compressed
+                $bytesPerSecond = 16000;
+            }
+
+            $info['estimated_duration'] = $info['size'] / $bytesPerSecond;
         }
 
         return $info;
