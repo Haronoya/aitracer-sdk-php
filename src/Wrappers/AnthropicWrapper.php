@@ -128,8 +128,19 @@ class MessagesWrapper
         } else {
             $logData['status'] = 'success';
             $logData['output'] = $this->extractOutput($response);
+            // Anthropic's input_tokens already excludes cache tokens,
+            // so it is passed through as-is (no deduction).
             $logData['input_tokens'] = $this->extractInputTokens($response);
             $logData['output_tokens'] = $this->extractOutputTokens($response);
+
+            $cacheReadTokens = $this->extractCacheTokens($response, 'cache_read_input_tokens');
+            if ($cacheReadTokens > 0) {
+                $logData['cache_read_input_tokens'] = $cacheReadTokens;
+            }
+            $cacheCreationTokens = $this->extractCacheTokens($response, 'cache_creation_input_tokens');
+            if ($cacheCreationTokens > 0) {
+                $logData['cache_creation_input_tokens'] = $cacheCreationTokens;
+            }
         }
 
         $this->tracer->log($logData);
@@ -146,6 +157,8 @@ class MessagesWrapper
         $content = '';
         $inputTokens = 0;
         $outputTokens = 0;
+        $cacheReadTokens = 0;
+        $cacheCreationTokens = 0;
         $stopReason = null;
         $model = $parameters['model'] ?? 'unknown';
 
@@ -168,7 +181,10 @@ class MessagesWrapper
                 $message = $event['message'] ?? [];
                 $model = $message['model'] ?? $model;
                 $usage = $message['usage'] ?? [];
+                // Anthropic's input_tokens already excludes cache tokens
                 $inputTokens = $usage['input_tokens'] ?? $inputTokens;
+                $cacheReadTokens = (int) ($usage['cache_read_input_tokens'] ?? $cacheReadTokens);
+                $cacheCreationTokens = (int) ($usage['cache_creation_input_tokens'] ?? $cacheCreationTokens);
             }
 
             if ($type === 'message_delta') {
@@ -195,6 +211,13 @@ class MessagesWrapper
             'input_tokens' => $inputTokens,
             'output_tokens' => $outputTokens,
         ];
+
+        if ($cacheReadTokens > 0) {
+            $logData['cache_read_input_tokens'] = $cacheReadTokens;
+        }
+        if ($cacheCreationTokens > 0) {
+            $logData['cache_creation_input_tokens'] = $cacheCreationTokens;
+        }
 
         $this->tracer->log($logData);
     }
@@ -254,6 +277,30 @@ class MessagesWrapper
         }
         if (is_array($response) && isset($response['usage']['input_tokens'])) {
             return $response['usage']['input_tokens'];
+        }
+        return 0;
+    }
+
+    /**
+     * Extract a prompt cache token count from response usage.
+     *
+     * Returns 0 when the field is absent (older API/client versions).
+     *
+     * @param string $field Snake_case field name, e.g. 'cache_read_input_tokens'
+     */
+    private function extractCacheTokens(mixed $response, string $field): int
+    {
+        // Object response: try camelCase then snake_case property
+        if (is_object($response) && isset($response->usage)) {
+            $camelField = lcfirst(str_replace('_', '', ucwords($field, '_')));
+            $usage = $response->usage;
+            if (is_object($usage)) {
+                return (int) ($usage->$camelField ?? $usage->$field ?? 0);
+            }
+        }
+        // Array response
+        if (is_array($response) && isset($response['usage'][$field])) {
+            return (int) $response['usage'][$field];
         }
         return 0;
     }

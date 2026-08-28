@@ -229,6 +229,8 @@ class AITracer
      *     output: array,
      *     input_tokens?: int,
      *     output_tokens?: int,
+     *     cache_read_input_tokens?: int,
+     *     cache_creation_input_tokens?: int,
      *     latency_ms?: int,
      *     status?: string,
      *     error_message?: string,
@@ -261,6 +263,9 @@ class AITracer
      */
     private function buildLogEntry(array $data): array
     {
+        // Use tracer-level user_id as default
+        $appUserId = $data['app_user_id'] ?? $data['user_id'] ?? $this->config->userId;
+
         $entry = [
             'project' => $this->config->project,
             'model' => $data['model'] ?? 'unknown',
@@ -276,9 +281,20 @@ class AITracer
             'span_id' => $data['span_id'] ?? $this->generateSpanId(),
             'parent_span_id' => $data['parent_span_id'] ?? null,
             'session_id' => $data['session_id'] ?? null,
-            'user_id' => $data['user_id'] ?? null,
+            'app_user_id' => $appUserId,
             'timestamp' => date('c'),
         ];
+
+        // Prompt cache tokens (omitted when zero, per API contract)
+        // Note: input_tokens must contain non-cached input tokens only.
+        $cacheReadTokens = (int) ($data['cache_read_input_tokens'] ?? 0);
+        if ($cacheReadTokens > 0) {
+            $entry['cache_read_input_tokens'] = $cacheReadTokens;
+        }
+        $cacheCreationTokens = (int) ($data['cache_creation_input_tokens'] ?? 0);
+        if ($cacheCreationTokens > 0) {
+            $entry['cache_creation_input_tokens'] = $cacheCreationTokens;
+        }
 
         // Add trace context if available
         if ($this->currentTrace !== null) {
@@ -297,7 +313,10 @@ class AITracer
         // Add session context if available
         if ($this->currentSession !== null) {
             $entry['session_id'] = $entry['session_id'] ?? $this->currentSession->getSessionId();
-            $entry['user_id'] = $entry['user_id'] ?? $this->currentSession->getUserId();
+            // Session user_id takes precedence over tracer-level user_id
+            if ($this->currentSession->getUserId() !== null) {
+                $entry['app_user_id'] = $this->currentSession->getUserId();
+            }
 
             // Update last log ID for feedback association
             $this->currentSession->setLastLogId($entry['span_id']);
@@ -426,8 +445,7 @@ class AITracer
     private function sendSessionEnd(Session $session): void
     {
         try {
-            $this->httpClient->patch('/api/v1/sessions/' . $session->getSessionId() . '/', [
-                'ended_at' => date('c'),
+            $this->httpClient->patch('/api/v1/sessions/' . $session->getSessionId() . '/end/', [
                 'metadata' => $session->getMetadata(),
             ]);
         } catch (\Exception $e) {

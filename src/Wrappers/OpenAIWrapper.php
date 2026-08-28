@@ -57,6 +57,14 @@ class OpenAIWrapper
     }
 
     /**
+     * Get the audio wrapper (Whisper API).
+     */
+    public function audio(): AudioWrapper
+    {
+        return new AudioWrapper($this->client->audio(), $this->tracer);
+    }
+
+    /**
      * Forward other method calls to the original client.
      *
      * @param string $name
@@ -143,6 +151,13 @@ class ChatCompletionsWrapper
     public function createStreamed(array $parameters): mixed
     {
         $parameters['stream'] = true;
+
+        // Request usage stats in the final chunk so token counts can be logged.
+        // https://platform.openai.com/docs/api-reference/chat/create#chat-create-stream_options
+        if (!isset($parameters['stream_options'])) {
+            $parameters['stream_options'] = ['include_usage' => true];
+        }
+
         $startTime = microtime(true);
 
         try {
@@ -186,8 +201,14 @@ class ChatCompletionsWrapper
         } else {
             $logData['status'] = 'success';
             $logData['output'] = $this->extractOutput($response);
-            $logData['input_tokens'] = $this->extractInputTokens($response);
+            // OpenAI's prompt_tokens INCLUDES cached tokens, so deduct them
+            // to report non-cached input tokens only.
+            $cachedTokens = $this->extractCachedTokens($response);
+            $logData['input_tokens'] = max($this->extractInputTokens($response) - $cachedTokens, 0);
             $logData['output_tokens'] = $this->extractOutputTokens($response);
+            if ($cachedTokens > 0) {
+                $logData['cache_read_input_tokens'] = $cachedTokens;
+            }
         }
 
         $this->tracer->log($logData);
@@ -205,6 +226,9 @@ class ChatCompletionsWrapper
         $toolCalls = [];
         $finishReason = null;
         $model = $parameters['model'] ?? 'unknown';
+        $inputTokens = 0;
+        $outputTokens = 0;
+        $cachedTokens = 0;
 
         foreach ($chunks as $chunk) {
             if (isset($chunk['choices'][0]['delta']['content'])) {
@@ -218,6 +242,20 @@ class ChatCompletionsWrapper
             }
             if (isset($chunk['model'])) {
                 $model = $chunk['model'];
+            }
+            // Usage is included in the final chunk when
+            // stream_options.include_usage is enabled.
+            if (isset($chunk['usage']) && is_array($chunk['usage'])) {
+                $usage = $chunk['usage'];
+                $promptTokens = (int) ($usage['prompt_tokens'] ?? $usage['promptTokens'] ?? $inputTokens);
+                $outputTokens = (int) ($usage['completion_tokens'] ?? $usage['completionTokens'] ?? $outputTokens);
+                // OpenAI's prompt_tokens INCLUDES cached tokens, so deduct
+                // them to report non-cached input tokens only.
+                $details = $usage['prompt_tokens_details'] ?? $usage['promptTokensDetails'] ?? null;
+                if (is_array($details)) {
+                    $cachedTokens = (int) ($details['cached_tokens'] ?? $details['cachedTokens'] ?? 0);
+                }
+                $inputTokens = max($promptTokens - $cachedTokens, 0);
             }
         }
 
@@ -237,10 +275,14 @@ class ChatCompletionsWrapper
             ],
             'latency_ms' => $latencyMs,
             'status' => 'success',
-            // Token counts not available in streaming
-            'input_tokens' => 0,
-            'output_tokens' => 0,
+            // Token counts come from the final chunk (stream_options.include_usage)
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
         ];
+
+        if ($cachedTokens > 0) {
+            $logData['cache_read_input_tokens'] = $cachedTokens;
+        }
 
         $this->tracer->log($logData);
     }
@@ -305,6 +347,34 @@ class ChatCompletionsWrapper
         }
         if (is_array($response) && isset($response['usage']['completion_tokens'])) {
             return $response['usage']['completion_tokens'];
+        }
+        return 0;
+    }
+
+    /**
+     * Extract cached prompt token count from response.
+     *
+     * Reads usage.prompt_tokens_details.cached_tokens (returns 0 when the
+     * field is absent, e.g. older API/client versions).
+     */
+    private function extractCachedTokens(mixed $response): int
+    {
+        if (is_object($response)) {
+            $details = $response->usage->promptTokensDetails
+                ?? $response->usage->prompt_tokens_details
+                ?? null;
+            if (is_object($details)) {
+                return (int) ($details->cachedTokens ?? $details->cached_tokens ?? 0);
+            }
+            if (is_array($details)) {
+                return (int) ($details['cached_tokens'] ?? $details['cachedTokens'] ?? 0);
+            }
+        }
+        if (is_array($response)) {
+            $details = $response['usage']['prompt_tokens_details'] ?? null;
+            if (is_array($details)) {
+                return (int) ($details['cached_tokens'] ?? 0);
+            }
         }
         return 0;
     }
@@ -474,5 +544,366 @@ class StreamWrapper implements \IteratorAggregate
         } finally {
             ($this->onComplete)($this->chunks);
         }
+    }
+}
+
+/**
+ * Wrapper for audio API (Whisper).
+ */
+class AudioWrapper
+{
+    private object $audio;
+    private AITracer $tracer;
+
+    public function __construct(object $audio, AITracer $tracer)
+    {
+        $this->audio = $audio;
+        $this->tracer = $tracer;
+    }
+
+    /**
+     * Get transcriptions interface.
+     */
+    public function transcriptions(): AudioTranscriptionsWrapper
+    {
+        return new AudioTranscriptionsWrapper($this->audio->transcriptions(), $this->tracer);
+    }
+
+    /**
+     * Get translations interface.
+     */
+    public function translations(): AudioTranslationsWrapper
+    {
+        return new AudioTranslationsWrapper($this->audio->translations(), $this->tracer);
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return $this->audio->$name(...$arguments);
+    }
+}
+
+/**
+ * Wrapper for audio.transcriptions.create() (Whisper).
+ */
+class AudioTranscriptionsWrapper
+{
+    private object $transcriptions;
+    private AITracer $tracer;
+
+    public function __construct(object $transcriptions, AITracer $tracer)
+    {
+        $this->transcriptions = $transcriptions;
+        $this->tracer = $tracer;
+    }
+
+    /**
+     * Create a transcription with automatic logging.
+     *
+     * @param array $parameters
+     * @return mixed
+     */
+    public function create(array $parameters): mixed
+    {
+        $startTime = microtime(true);
+        $error = null;
+        $response = null;
+
+        try {
+            $response = $this->transcriptions->create($parameters);
+            return $response;
+        } catch (Throwable $e) {
+            $error = $e;
+            throw $e;
+        } finally {
+            $this->logCall($parameters, $response, $startTime, $error);
+        }
+    }
+
+    /**
+     * Log a transcription call.
+     */
+    private function logCall(array $parameters, mixed $response, float $startTime, ?Throwable $error): void
+    {
+        $latencyMs = (int) ((microtime(true) - $startTime) * 1000);
+
+        // Get file info
+        $fileInfo = $this->getFileInfo($parameters['file'] ?? null);
+
+        $logData = [
+            'model' => $parameters['model'] ?? 'whisper-1',
+            'provider' => 'openai',
+            'input' => [
+                'type' => 'audio_transcription',
+                'file_name' => $fileInfo['name'],
+                'file_size_bytes' => $fileInfo['size'],
+                'language' => $parameters['language'] ?? null,
+            ],
+            'latency_ms' => $latencyMs,
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'metadata' => [
+                'audio_duration_seconds' => $fileInfo['estimated_duration'],
+            ],
+        ];
+
+        if ($error !== null) {
+            $logData['status'] = 'error';
+            $logData['error_message'] = $error->getMessage();
+            $logData['output'] = [];
+        } else {
+            $logData['status'] = 'success';
+            $text = $this->extractText($response);
+            $logData['output'] = [
+                'text' => $text,
+                'text_length' => strlen($text),
+            ];
+        }
+
+        $this->tracer->log($logData);
+    }
+
+    /**
+     * Extract text from response.
+     */
+    private function extractText(mixed $response): string
+    {
+        if ($response === null) {
+            return '';
+        }
+
+        if (is_object($response) && isset($response->text)) {
+            return $response->text;
+        }
+
+        if (is_array($response) && isset($response['text'])) {
+            return $response['text'];
+        }
+
+        if (is_string($response)) {
+            return $response;
+        }
+
+        return '';
+    }
+
+    /**
+     * Get file info from file parameter.
+     */
+    private function getFileInfo(mixed $file): array
+    {
+        $info = ['name' => null, 'size' => null, 'estimated_duration' => null];
+
+        if ($file === null) {
+            return $info;
+        }
+
+        // Handle SplFileInfo
+        if ($file instanceof \SplFileInfo) {
+            $info['name'] = $file->getFilename();
+            $info['size'] = $file->getSize();
+        } elseif (is_resource($file)) {
+            // Handle resource (fopen)
+            $meta = stream_get_meta_data($file);
+            if (isset($meta['uri'])) {
+                $info['name'] = basename($meta['uri']);
+                if (file_exists($meta['uri'])) {
+                    $info['size'] = filesize($meta['uri']);
+                }
+            }
+        } elseif (is_string($file) && file_exists($file)) {
+            // Handle string (file path)
+            $info['name'] = basename($file);
+            $info['size'] = filesize($file);
+        }
+
+        // Estimate audio duration from file size
+        // This is used for Whisper cost calculation (charged per minute)
+        if ($info['size'] !== null) {
+            $fileName = strtolower($info['name'] ?? '');
+
+            // Estimate based on typical bitrates:
+            // WAV: 16-bit 44.1kHz mono = 88.2KB/sec
+            // MP3/M4A/etc: ~128kbps = 16KB/sec
+            if (str_ends_with($fileName, '.wav')) {
+                $bytesPerSecond = 88200;
+            } elseif (preg_match('/\.(mp3|m4a|mpga|mpeg|mp4|webm|ogg)$/', $fileName)) {
+                $bytesPerSecond = 16000;
+            } else {
+                // Unknown format: assume 128kbps compressed
+                $bytesPerSecond = 16000;
+            }
+
+            $info['estimated_duration'] = $info['size'] / $bytesPerSecond;
+        }
+
+        return $info;
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return $this->transcriptions->$name(...$arguments);
+    }
+}
+
+/**
+ * Wrapper for audio.translations.create() (Whisper).
+ */
+class AudioTranslationsWrapper
+{
+    private object $translations;
+    private AITracer $tracer;
+
+    public function __construct(object $translations, AITracer $tracer)
+    {
+        $this->translations = $translations;
+        $this->tracer = $tracer;
+    }
+
+    /**
+     * Create a translation with automatic logging.
+     *
+     * @param array $parameters
+     * @return mixed
+     */
+    public function create(array $parameters): mixed
+    {
+        $startTime = microtime(true);
+        $error = null;
+        $response = null;
+
+        try {
+            $response = $this->translations->create($parameters);
+            return $response;
+        } catch (Throwable $e) {
+            $error = $e;
+            throw $e;
+        } finally {
+            $this->logCall($parameters, $response, $startTime, $error);
+        }
+    }
+
+    /**
+     * Log a translation call.
+     */
+    private function logCall(array $parameters, mixed $response, float $startTime, ?Throwable $error): void
+    {
+        $latencyMs = (int) ((microtime(true) - $startTime) * 1000);
+
+        // Get file info
+        $fileInfo = $this->getFileInfo($parameters['file'] ?? null);
+
+        $logData = [
+            'model' => $parameters['model'] ?? 'whisper-1',
+            'provider' => 'openai',
+            'input' => [
+                'type' => 'audio_translation',
+                'file_name' => $fileInfo['name'],
+                'file_size_bytes' => $fileInfo['size'],
+            ],
+            'latency_ms' => $latencyMs,
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'metadata' => [
+                'audio_duration_seconds' => $fileInfo['estimated_duration'],
+            ],
+        ];
+
+        if ($error !== null) {
+            $logData['status'] = 'error';
+            $logData['error_message'] = $error->getMessage();
+            $logData['output'] = [];
+        } else {
+            $logData['status'] = 'success';
+            $text = $this->extractText($response);
+            $logData['output'] = [
+                'text' => $text,
+                'text_length' => strlen($text),
+            ];
+        }
+
+        $this->tracer->log($logData);
+    }
+
+    /**
+     * Extract text from response.
+     */
+    private function extractText(mixed $response): string
+    {
+        if ($response === null) {
+            return '';
+        }
+
+        if (is_object($response) && isset($response->text)) {
+            return $response->text;
+        }
+
+        if (is_array($response) && isset($response['text'])) {
+            return $response['text'];
+        }
+
+        if (is_string($response)) {
+            return $response;
+        }
+
+        return '';
+    }
+
+    /**
+     * Get file info from file parameter.
+     */
+    private function getFileInfo(mixed $file): array
+    {
+        $info = ['name' => null, 'size' => null, 'estimated_duration' => null];
+
+        if ($file === null) {
+            return $info;
+        }
+
+        // Handle SplFileInfo
+        if ($file instanceof \SplFileInfo) {
+            $info['name'] = $file->getFilename();
+            $info['size'] = $file->getSize();
+        } elseif (is_resource($file)) {
+            // Handle resource (fopen)
+            $meta = stream_get_meta_data($file);
+            if (isset($meta['uri'])) {
+                $info['name'] = basename($meta['uri']);
+                if (file_exists($meta['uri'])) {
+                    $info['size'] = filesize($meta['uri']);
+                }
+            }
+        } elseif (is_string($file) && file_exists($file)) {
+            // Handle string (file path)
+            $info['name'] = basename($file);
+            $info['size'] = filesize($file);
+        }
+
+        // Estimate audio duration from file size
+        // This is used for Whisper cost calculation (charged per minute)
+        if ($info['size'] !== null) {
+            $fileName = strtolower($info['name'] ?? '');
+
+            // Estimate based on typical bitrates:
+            // WAV: 16-bit 44.1kHz mono = 88.2KB/sec
+            // MP3/M4A/etc: ~128kbps = 16KB/sec
+            if (str_ends_with($fileName, '.wav')) {
+                $bytesPerSecond = 88200;
+            } elseif (preg_match('/\.(mp3|m4a|mpga|mpeg|mp4|webm|ogg)$/', $fileName)) {
+                $bytesPerSecond = 16000;
+            } else {
+                // Unknown format: assume 128kbps compressed
+                $bytesPerSecond = 16000;
+            }
+
+            $info['estimated_duration'] = $info['size'] / $bytesPerSecond;
+        }
+
+        return $info;
+    }
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        return $this->translations->$name(...$arguments);
     }
 }
