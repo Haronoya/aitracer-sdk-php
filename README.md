@@ -5,7 +5,7 @@ AITracer PHP SDK - AI/LLM APIコールのモニタリングとトレーシング
 ## インストール
 
 ```bash
-composer require aitracer/aitracer-php
+composer require haro/aitracer
 ```
 
 ## クイックスタート
@@ -184,8 +184,10 @@ $tracer->log([
     'provider' => 'openai',                // プロバイダー（自動検出可）
     'input' => [...],                      // 入力データ
     'output' => [...],                     // 出力データ
-    'input_tokens' => 100,                 // 入力トークン数
+    'input_tokens' => 100,                 // 非キャッシュ入力トークン数
     'output_tokens' => 50,                 // 出力トークン数
+    'cache_read_input_tokens' => 0,        // プロンプトキャッシュから読み出した入力トークン数
+    'cache_creation_input_tokens' => 0,    // プロンプトキャッシュに書き込んだ入力トークン数
     'latency_ms' => 1234,                  // レイテンシ（ミリ秒）
     'status' => 'success',                 // success または error
     'error_message' => null,               // エラーメッセージ
@@ -196,6 +198,8 @@ $tracer->log([
     'user_id' => 'user-456',               // ユーザーID
 ]);
 ```
+
+> **Note**: `input_tokens` は非キャッシュ分の入力トークンに正規化されます。ラッパー（`wrapOpenAI` / `wrapAnthropic` / `wrapGemini`）使用時は、プロンプトキャッシュのトークンが `cache_read_input_tokens` / `cache_creation_input_tokens` に自動計上されます。
 
 ## 要件
 

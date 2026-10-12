@@ -250,9 +250,9 @@ class AITracer
 
         $logEntry = $this->buildLogEntry($data);
 
-        // Apply PII detection if enabled
-        if ($this->piiDetector !== null) {
-            $logEntry = $this->piiDetector->process($logEntry);
+        // Mask PII in content fields only; IDs must stay intact to link logs
+        foreach (['input', 'output', 'error_message', 'metadata'] as $field) {
+            $logEntry[$field] = $this->maskPii($logEntry[$field] ?? null);
         }
 
         $this->queue->push($logEntry);
@@ -422,6 +422,14 @@ class AITracer
     // Session API methods (internal)
 
     /**
+     * Mask PII in data about to be sent (unchanged when PII detection is off).
+     */
+    private function maskPii(mixed $data): mixed
+    {
+        return $this->piiDetector !== null ? $this->piiDetector->process($data) : $data;
+    }
+
+    /**
      * Send session start event to the server.
      */
     private function sendSessionStart(Session $session): void
@@ -430,8 +438,8 @@ class AITracer
             $this->httpClient->post('/api/v1/sessions/', [
                 'session_id' => $session->getSessionId(),
                 'user_id' => $session->getUserId(),
-                'name' => $session->getName(),
-                'metadata' => $session->getMetadata(),
+                'name' => $this->maskPii($session->getName()),
+                'metadata' => $this->maskPii($session->getMetadata()),
                 'project' => $this->config->project,
             ]);
         } catch (\Exception $e) {
@@ -446,7 +454,7 @@ class AITracer
     {
         try {
             $this->httpClient->patch('/api/v1/sessions/' . $session->getSessionId() . '/end/', [
-                'metadata' => $session->getMetadata(),
+                'metadata' => $this->maskPii($session->getMetadata()),
             ]);
         } catch (\Exception $e) {
             $this->logger->error('Failed to end session: ' . $e->getMessage());
@@ -463,7 +471,10 @@ class AITracer
     public function sendSessionEvent(string $sessionId, array $event): void
     {
         try {
-            $this->httpClient->post('/api/v1/sessions/' . $sessionId . '/events/', $event);
+            $this->httpClient->post('/api/v1/sessions/' . $sessionId . '/events/', array_merge($event, [
+                'name' => $this->maskPii($event['name'] ?? null),
+                'data' => $this->maskPii($event['data'] ?? []),
+            ]));
         } catch (\Exception $e) {
             $this->logger->error('Failed to send session event: ' . $e->getMessage());
         }
@@ -481,7 +492,10 @@ class AITracer
         try {
             $this->httpClient->post('/api/v1/sessions/' . $sessionId . '/feedback/', array_merge(
                 $feedback,
-                ['session_id' => $sessionId]
+                [
+                    'comment' => $this->maskPii($feedback['comment'] ?? null),
+                    'session_id' => $sessionId,
+                ]
             ));
         } catch (\Exception $e) {
             $this->logger->error('Failed to send feedback: ' . $e->getMessage());

@@ -131,4 +131,62 @@ class PiiDetectorTest extends TestCase
 
         $this->assertEquals('電話: [japanese_phone]', $result);
     }
+
+    /**
+     * Same cases as the Python SDK (sdk/tests/test_pii.py).
+     *
+     * @return array<string, array{string, string, string}>
+     */
+    public static function adjacentToJapaneseProvider(): array
+    {
+        return [
+            'email' => ['email', '連絡先はtaro@example.comです', '連絡先は[email]です'],
+            'phone' => ['phone', '電話090-1234-5678まで', '電話[phone]まで'],
+            'credit_card' => ['credit_card', 'カード4111-1111-1111-1111で決済', 'カード[credit_card]で決済'],
+            'ssn' => ['ssn', '番号123-45-6789です', '番号[ssn]です'],
+            'ip_address' => ['ip_address', '接続元192.168.0.1から', '接続元[ip_address]から'],
+        ];
+    }
+
+    /**
+     * @dataProvider adjacentToJapaneseProvider
+     */
+    public function testMasksValueAdjacentToJapanese(string $type, string $text, string $expected): void
+    {
+        $detector = new PiiDetector([$type], 'mask');
+
+        $this->assertEquals($expected, $detector->process($text));
+    }
+
+    public function testJapaneseMobileNumberIsMaskedWhole(): void
+    {
+        // The US-style alternative used to match "090-1234" first and leave "-5678"
+        $detector = new PiiDetector(['phone'], 'mask');
+
+        $this->assertEquals('電話は [phone] まで', $detector->process('電話は 090-1234-5678 まで'));
+    }
+
+    public function testCardNumberIsNotPartiallyMaskedAsPhone(): void
+    {
+        // Phone used to be applied first and leave the last 6 digits of the card
+        $detector = new PiiDetector(['phone', 'credit_card'], 'mask');
+
+        $this->assertEquals('カード[credit_card]で決済', $detector->process('カード4111111111111111で決済'));
+    }
+
+    public function testDigitsInsideAsciiTokenAreNotPhone(): void
+    {
+        $detector = new PiiDetector(['phone'], 'mask');
+        $text = 'order ABC09012345678XYZ shipped';
+
+        $this->assertEquals($text, $detector->process($text));
+    }
+
+    public function testEmailTldDoesNotAcceptPipe(): void
+    {
+        $detector = new PiiDetector(['email'], 'mask');
+        $text = 'invalid a@example.|o address';
+
+        $this->assertEquals($text, $detector->process($text));
+    }
 }

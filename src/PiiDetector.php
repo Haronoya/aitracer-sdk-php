@@ -12,15 +12,36 @@ class PiiDetector
     private array $patterns = [];
     private string $action;
 
+    /**
+     * Patterns shared with the Python SDK (sdk/aitracer/pii.py).
+     *
+     * Without the u modifier, \b treats multibyte characters as non-word, so
+     * values written right after Japanese text are still detected.
+     */
     private const DEFAULT_PATTERNS = [
-        'email' => '/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i',
-        'phone' => '/(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}|0\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{4}/i',
-        'credit_card' => '/\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/',
-        'ssn' => '/\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/',
-        'ip_address' => '/\b(?:\d{1,3}\.){3}\d{1,3}\b/',
-        'japanese_phone' => '/0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{4}/',
+        'email' => '/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i',
+        'phone' => '/\b(?:\+?[0-9]{1,4}[-.\s]?)?(?:\(?[0-9]{2,4}\)?[-.\s]?)?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4}\b/',
+        'credit_card' => '/\b(?:4[0-9]{3}[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4}|5[1-5][0-9]{2}[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4}|3[47][0-9]{2}[-\s]?[0-9]{6}[-\s]?[0-9]{5}|6(?:011|5[0-9]{2})[-\s]?[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4})\b/',
+        'ssn' => '/\b(?:[0-9]{3}[-\s]?[0-9]{2}[-\s]?[0-9]{4}|[0-9]{4}[-\s]?[0-9]{4}[-\s]?[0-9]{4})\b/',
+        'ip_address' => '/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b|(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b/',
+        'japanese_phone' => '/\b0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{4}\b/',
         'my_number' => '/\b\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/',
     ];
+
+    /**
+     * When matches overlap, the one starting first wins; at the same start,
+     * the higher confidence wins (same rule as the Python SDK).
+     */
+    private const CONFIDENCE = [
+        'email' => 0.95,
+        'phone' => 0.85,
+        'credit_card' => 0.95,
+        'ssn' => 0.90,
+        'ip_address' => 0.95,
+        'japanese_phone' => 0.85,
+        'my_number' => 0.90,
+    ];
+    private const CUSTOM_CONFIDENCE = 0.8;
 
     /**
      * @param array<string> $types PII types to detect
@@ -110,13 +131,59 @@ class PiiDetector
      */
     private function maskString(string $text): string
     {
-        foreach ($this->patterns as $type => $pattern) {
-            $text = preg_replace_callback($pattern, function ($matches) use ($type) {
-                return $this->replaceMatch($matches[0], $type);
-            }, $text) ?? $text;
+        // Replace from the end so earlier byte offsets stay valid
+        foreach (array_reverse($this->findMatches($text)) as $match) {
+            $text = substr_replace(
+                $text,
+                $this->replaceMatch($match['value'], $match['type']),
+                $match['offset'],
+                strlen($match['value'])
+            );
         }
 
         return $text;
+    }
+
+    /**
+     * Find PII in a string with every pattern, then drop overlapping matches.
+     *
+     * Applying the patterns one after another let an earlier pattern take part
+     * of a value (e.g. phone matching the first digits of a card number).
+     *
+     * @return array<array{type: string, value: string, offset: int}> Matches in order of position
+     */
+    private function findMatches(string $text): array
+    {
+        $matches = [];
+        foreach ($this->patterns as $type => $pattern) {
+            if (!preg_match_all($pattern, $text, $found, PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+            foreach ($found[0] as [$value, $offset]) {
+                if ($value === '') {
+                    continue;
+                }
+                $matches[] = [
+                    'type' => $type,
+                    'value' => $value,
+                    'offset' => $offset,
+                    'confidence' => self::CONFIDENCE[$type] ?? self::CUSTOM_CONFIDENCE,
+                ];
+            }
+        }
+
+        usort($matches, fn ($a, $b) => [$a['offset'], $b['confidence']] <=> [$b['offset'], $a['confidence']]);
+
+        $result = [];
+        $lastEnd = -1;
+        foreach ($matches as $match) {
+            if ($match['offset'] >= $lastEnd) {
+                $result[] = ['type' => $match['type'], 'value' => $match['value'], 'offset' => $match['offset']];
+                $lastEnd = $match['offset'] + strlen($match['value']);
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -159,16 +226,12 @@ class PiiDetector
     private function detectRecursive(mixed $data, string $path, array &$detections): void
     {
         if (is_string($data)) {
-            foreach ($this->patterns as $type => $pattern) {
-                if (preg_match_all($pattern, $data, $matches)) {
-                    foreach ($matches[0] as $match) {
-                        $detections[] = [
-                            'type' => $type,
-                            'value' => $match,
-                            'path' => $path,
-                        ];
-                    }
-                }
+            foreach ($this->findMatches($data) as $match) {
+                $detections[] = [
+                    'type' => $match['type'],
+                    'value' => $match['value'],
+                    'path' => $path,
+                ];
             }
             return;
         }
