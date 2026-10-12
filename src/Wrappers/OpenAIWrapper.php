@@ -195,6 +195,7 @@ class ChatCompletionsWrapper
         if ($error !== null) {
             $logData['status'] = 'error';
             $logData['error_message'] = $error->getMessage();
+            $logData['error_type'] = $error::class;
             $logData['output'] = [];
             $logData['input_tokens'] = 0;
             $logData['output_tokens'] = 0;
@@ -430,6 +431,7 @@ class CompletionsWrapper
             if ($error !== null) {
                 $logData['status'] = 'error';
                 $logData['error_message'] = $error->getMessage();
+                $logData['error_type'] = $error::class;
                 $logData['output'] = [];
             } else {
                 $logData['status'] = 'success';
@@ -494,6 +496,7 @@ class EmbeddingsWrapper
             if ($error !== null) {
                 $logData['status'] = 'error';
                 $logData['error_message'] = $error->getMessage();
+                $logData['error_type'] = $error::class;
                 $logData['output'] = [];
             } else {
                 $logData['status'] = 'success';
@@ -650,6 +653,7 @@ class AudioTranscriptionsWrapper
         if ($error !== null) {
             $logData['status'] = 'error';
             $logData['error_message'] = $error->getMessage();
+            $logData['error_type'] = $error::class;
             $logData['output'] = [];
         } else {
             $logData['status'] = 'success';
@@ -812,6 +816,7 @@ class AudioTranslationsWrapper
         if ($error !== null) {
             $logData['status'] = 'error';
             $logData['error_message'] = $error->getMessage();
+            $logData['error_type'] = $error::class;
             $logData['output'] = [];
         } else {
             $logData['status'] = 'success';

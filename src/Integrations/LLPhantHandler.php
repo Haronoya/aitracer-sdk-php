@@ -298,6 +298,7 @@ class LLPhantChatWrapper
         if ($error !== null) {
             $logData['status'] = 'error';
             $logData['error_message'] = $error->getMessage();
+            $logData['error_type'] = $error::class;
             $logData['output'] = [];
         } else {
             $logData['status'] = 'success';
@@ -338,6 +339,7 @@ class LLPhantChatWrapper
         if ($error !== null) {
             $logData['status'] = 'error';
             $logData['error_message'] = $error->getMessage();
+            $logData['error_type'] = $error::class;
             $logData['output'] = [];
         } else {
             $logData['status'] = 'success';
@@ -490,6 +492,7 @@ class LLPhantEmbeddingWrapper
             if ($error !== null) {
                 $logData['status'] = 'error';
                 $logData['error_message'] = $error->getMessage();
+                $logData['error_type'] = $error::class;
                 $logData['output'] = [];
             } else {
                 $logData['status'] = 'success';
@@ -529,6 +532,7 @@ class LLPhantEmbeddingWrapper
         if ($error !== null) {
             $logData['status'] = 'error';
             $logData['error_message'] = $error->getMessage();
+            $logData['error_type'] = $error::class;
             $logData['output'] = [];
         } else {
             $embeddingCount = $isBatch ? count($response ?? []) : 1;

@@ -3,6 +3,27 @@
 All notable changes to the PHP SDK are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.8.0] - 2026-10-12
+
+### Added
+- **本文を送らないオプション `capture_content` を追加**（既定は `true` で従来どおり。
+  Python SDK の `capture_content`、TypeScript SDK の `captureContent` と同じ挙動）。
+  `'capture_content' => false` にすると、LLM の入出力の本文を送らず、モデル・トークン数・
+  レイテンシ・ステータス・トレース／セッションの ID・`metadata` などのメタ情報だけを
+  送信する。議事録など、氏名・住所を正規表現では確実に検出できない本文を扱うアプリ向け。
+  - ログの `input` / `output` は `{"redacted": true}` に置き換える。
+  - `error_message` は例外クラス名（例: `OpenAI\Exceptions\ErrorException`）に置き換える。
+  - セッションイベントの `data` は `{"redacted": true}`、フィードバックの `comment` は送らない。
+  - トークン数はプロバイダーの応答から取得するため、コスト計算は従来どおり。
+- `AITracer::log()` のデータに `error_type`（例外クラス名）を追加。各ラッパーと LLPhant 連携は
+  エラー時にこれを渡す。`capture_content` が `false` のときだけ `error_message` として送られる。
+
+### Changed
+- **`base_url`（環境変数 `AITRACER_BASE_URL` を含む）は https 必須に**。`http://` は
+  `localhost` / `127.0.0.1` / `::1` のときだけ許可し、それ以外や URL として不正な値は
+  初期化時に `InvalidArgumentException` にする。これまで `http://` の URL に API キーと
+  ログを平文で送れていた。
+
 ## [1.7.1] - 2026-10-12
 
 ### Fixed
@@ -44,5 +65,6 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   マイグレーション `logs/0010` 適用済みである必要があります（未適用でも
   新フィールドは無視されるだけで、既存動作には影響しません）。
 
+[1.8.0]: https://packagist.org/packages/haro/aitracer
 [1.7.1]: https://packagist.org/packages/haro/aitracer
 [1.7.0]: https://packagist.org/packages/haro/aitracer

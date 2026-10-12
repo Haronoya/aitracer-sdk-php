@@ -37,6 +37,9 @@ use Psr\Log\NullLogger;
  */
 class AITracer
 {
+    /** Placeholder sent instead of content when capture_content is false. */
+    private const REDACTED = ['redacted' => true];
+
     private static ?AITracer $instance = null;
 
     private Config $config;
@@ -61,6 +64,7 @@ class AITracer
      *     pii_detection?: bool,
      *     pii_action?: string,
      *     pii_types?: array<string>,
+     *     capture_content?: bool,
      *     logger?: LoggerInterface,
      * } $options
      */
@@ -234,6 +238,7 @@ class AITracer
      *     latency_ms?: int,
      *     status?: string,
      *     error_message?: string,
+     *     error_type?: string,
      *     metadata?: array,
      *     trace_id?: string,
      *     span_id?: string,
@@ -241,6 +246,9 @@ class AITracer
      *     session_id?: string,
      *     user_id?: string,
      * } $data
+     *
+     * error_type is the exception class name. It is sent as error_message only when
+     * capture_content is false, because error_message may quote the content.
      */
     public function log(array $data): void
     {
@@ -249,6 +257,14 @@ class AITracer
         }
 
         $logEntry = $this->buildLogEntry($data);
+
+        if (!$this->config->captureContent) {
+            // Token counts and cost inputs are already computed by the caller;
+            // drop everything that may carry the content itself.
+            $logEntry['input'] = self::REDACTED;
+            $logEntry['output'] = self::REDACTED;
+            $logEntry['error_message'] = $data['error_type'] ?? null;
+        }
 
         // Mask PII in content fields only; IDs must stay intact to link logs
         foreach (['input', 'output', 'error_message', 'metadata'] as $field) {
@@ -473,7 +489,7 @@ class AITracer
         try {
             $this->httpClient->post('/api/v1/sessions/' . $sessionId . '/events/', array_merge($event, [
                 'name' => $this->maskPii($event['name'] ?? null),
-                'data' => $this->maskPii($event['data'] ?? []),
+                'data' => $this->config->captureContent ? $this->maskPii($event['data'] ?? []) : self::REDACTED,
             ]));
         } catch (\Exception $e) {
             $this->logger->error('Failed to send session event: ' . $e->getMessage());
@@ -493,7 +509,7 @@ class AITracer
             $this->httpClient->post('/api/v1/sessions/' . $sessionId . '/feedback/', array_merge(
                 $feedback,
                 [
-                    'comment' => $this->maskPii($feedback['comment'] ?? null),
+                    'comment' => $this->config->captureContent ? $this->maskPii($feedback['comment'] ?? null) : null,
                     'session_id' => $sessionId,
                 ]
             ));

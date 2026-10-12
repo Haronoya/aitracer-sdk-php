@@ -125,13 +125,43 @@ $tracer = new AITracer([
 // "Contact test@example.com" → "Contact [email]"
 ```
 
+### 本文を送らない（`capture_content => false`）
+
+議事録など機密性の高い本文を扱うアプリでは、`capture_content => false` を指定すると、LLM の入出力の本文を AITracer に送らず、メタ情報だけを送ります。氏名や住所は正規表現によるマスキング（`pii_detection`）では確実に検出できないため、本文そのものを送らないのが最も確実な対策です。
+
+```php
+<?php
+
+$tracer = new AITracer([
+    'api_key' => 'at-xxxxx',
+    'project' => 'minutes-app',
+    'capture_content' => false,
+]);
+```
+
+| 項目 | 送信内容 |
+|------|---------|
+| モデル・プロバイダー、トークン数（キャッシュ分を含む）、レイテンシ、ステータス | そのまま送信 |
+| トレース ID・スパン ID・セッション ID・ユーザー ID | そのまま送信 |
+| ログの `metadata`（トレースのメタデータを含む） | そのまま送信 |
+| セッションの `name` / `metadata`、イベントの `event_type` / `name`、フィードバックの種類・スコア | そのまま送信 |
+| ログの `input` / `output` | `{"redacted": true}` に置き換え |
+| ログの `error_message` | 例外クラス名（例: `OpenAI\Exceptions\ErrorException`）に置き換え。手動 `log()` で `error_type` を渡さない場合は送らない |
+| イベントの `data` | `{"redacted": true}` に置き換え |
+| フィードバックの `comment` | 送らない（`null`） |
+
+- トークン数はプロバイダーの応答（usage）から取得するため、本文を送らなくてもコストは従来どおり計算されます。Whisper のコスト計算に使う `audio_duration_seconds` も `metadata` で送られます（ファイル名は `input` に含まれるため送られません）。
+- `metadata`・セッション名・イベント名はそのまま送られるので、本文や個人情報を入れないでください。`pii_detection => true` と併用すると、送られる項目にはマスキングが適用されます。
+- LLM への入力や、呼び出し元に返る応答は変更されません。ダッシュボードには本文が表示されず、本文を使う機能（リプレイなど）は使えません。
+- 手動でエラーを記録するときは `'error_message' => $e->getMessage()` に加えて `'error_type' => $e::class` を渡すと、`capture_content => false` のときは例外クラス名が送られます。
+
 ## 設定オプション
 
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
 | `api_key` | - | AITracer APIキー（必須） |
 | `project` | - | プロジェクト名/ID（必須） |
-| `base_url` | `https://api.aitracer.co` | APIエンドポイント |
+| `base_url` | `https://api.aitracer.co` | APIエンドポイント（https 必須。http は localhost / 127.0.0.1 / ::1 のみ可） |
 | `sync` | `false` | 同期モード（サーバーレス環境用） |
 | `enabled` | `true` | ログ記録の有効/無効 |
 | `flush_on_exit` | `true` | 終了時に自動フラッシュ |
@@ -141,6 +171,7 @@ $tracer = new AITracer([
 | `pii_detection` | `false` | PII検出の有効化 |
 | `pii_action` | `mask` | PII処理方法 |
 | `pii_types` | `[email, phone, ...]` | 検出するPIIタイプ |
+| `capture_content` | `true` | `false` で LLM の入出力の本文を送らない（メタ情報のみ） |
 
 ## 環境変数
 
@@ -149,6 +180,8 @@ AITRACER_API_KEY=at-xxxxx
 AITRACER_PROJECT=my-project
 AITRACER_BASE_URL=https://api.aitracer.co  # オプション
 ```
+
+`base_url` / `AITRACER_BASE_URL` は `https://` が必須です。`http://` は開発用に `localhost` / `127.0.0.1` / `::1` のときだけ使えます。それ以外の URL は初期化時に `InvalidArgumentException` になります。
 
 ## サーバーレス環境（AWS Lambda等）
 

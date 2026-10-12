@@ -16,6 +16,9 @@ class Config
     public const DEFAULT_FLUSH_INTERVAL = 5.0;
     public const DEFAULT_TIMEOUT = 30;
 
+    /** Hosts allowed to use plain http (local development only). */
+    private const HTTP_ALLOWED_HOSTS = ['localhost', '127.0.0.1', '::1'];
+
     public readonly string $apiKey;
     public readonly string $project;
     public readonly ?string $userId;
@@ -29,6 +32,7 @@ class Config
     public readonly bool $piiDetection;
     public readonly string $piiAction;
     public readonly array $piiTypes;
+    public readonly bool $captureContent;
 
     /**
      * @param array{
@@ -45,6 +49,7 @@ class Config
      *     pii_detection?: bool,
      *     pii_action?: string,
      *     pii_types?: array<string>,
+     *     capture_content?: bool,
      * } $options
      */
     public function __construct(array $options = [])
@@ -75,9 +80,8 @@ class Config
         }
 
         // Optional settings
-        $this->baseUrl = rtrim(
-            $options['base_url'] ?? getenv('AITRACER_BASE_URL') ?: self::DEFAULT_BASE_URL,
-            '/'
+        $this->baseUrl = self::validateBaseUrl(
+            $options['base_url'] ?? getenv('AITRACER_BASE_URL') ?: self::DEFAULT_BASE_URL
         );
         $this->sync = $options['sync'] ?? false;
         $this->enabled = $options['enabled'] ?? true;
@@ -85,6 +89,9 @@ class Config
         $this->batchSize = $options['batch_size'] ?? self::DEFAULT_BATCH_SIZE;
         $this->flushInterval = $options['flush_interval'] ?? self::DEFAULT_FLUSH_INTERVAL;
         $this->timeout = $options['timeout'] ?? self::DEFAULT_TIMEOUT;
+
+        // When false, LLM input/output content is never sent (metadata only)
+        $this->captureContent = $options['capture_content'] ?? true;
 
         // PII settings
         $this->piiDetection = $options['pii_detection'] ?? false;
@@ -97,6 +104,40 @@ class Config
                 'Invalid PII action. Must be one of: mask, redact, hash, none.'
             );
         }
+    }
+
+    /**
+     * Validate the base URL and return it without trailing slashes.
+     *
+     * https is required; http is allowed only for localhost / 127.0.0.1 / ::1.
+     *
+     * @throws InvalidArgumentException
+     */
+    private static function validateBaseUrl(string $baseUrl): string
+    {
+        $parts = parse_url($baseUrl);
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        // parse_url keeps the brackets of an IPv6 host
+        $host = strtolower(trim((string) ($parts['host'] ?? ''), '[]'));
+
+        if ($scheme === '' || $host === '') {
+            throw new InvalidArgumentException(sprintf(
+                'Invalid base URL "%s": expected an absolute URL such as "https://api.aitracer.co"'
+                . ' (set via the base_url option or the AITRACER_BASE_URL environment variable).',
+                $baseUrl
+            ));
+        }
+
+        $isHttps = $scheme === 'https';
+        $isLocalHttp = $scheme === 'http' && in_array($host, self::HTTP_ALLOWED_HOSTS, true);
+        if (!$isHttps && !$isLocalHttp) {
+            throw new InvalidArgumentException(sprintf(
+                'Invalid base URL "%s": https is required (http is allowed only for localhost, 127.0.0.1 and ::1).',
+                $baseUrl
+            ));
+        }
+
+        return rtrim($baseUrl, '/');
     }
 
     /**
