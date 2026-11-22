@@ -1,7 +1,7 @@
 {
     "name": "haro/aitracer",
     "description": "AITracer PHP SDK - Monitor and trace AI/LLM API calls",
-    "version": "1.8.0",
+    "version": "1.8.1",
     "type": "library",
     "license": "MIT",
     "keywords": [
@@ -24,7 +24,7 @@
     "homepage": "https://aitracer.co",
     "require": {
         "php": ">=8.1",
-        "guzzlehttp/guzzle": "^7.0",
+        "guzzlehttp/guzzle": "^7.15.2",
         "psr/log": "^3.0"
     },
     "require-dev": {

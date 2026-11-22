@@ -3,6 +3,14 @@
 All notable changes to the PHP SDK are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.8.1] - 2026-11-22
+
+### Security
+- `guzzlehttp/guzzle` の下限を `^7.0` から `^7.15.2` に引き上げ。7.15.2 未満にはホスト判定の迂回
+  （high）、Cookie のスコープ、リダイレクト時の Referer / Proxy-Authorization の漏れなどの
+  脆弱性があり、従来の制約では利用側で該当バージョンが入り得た。これに伴い `guzzlehttp/psr7` も
+  修正済みの 2.13 以上になる。
+
 ## [1.8.0] - 2026-10-12
 
 ### Added
@@ -65,6 +73,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   マイグレーション `logs/0010` 適用済みである必要があります（未適用でも
   新フィールドは無視されるだけで、既存動作には影響しません）。
 
+[1.8.1]: https://packagist.org/packages/haro/aitracer
 [1.8.0]: https://packagist.org/packages/haro/aitracer
 [1.7.1]: https://packagist.org/packages/haro/aitracer
 [1.7.0]: https://packagist.org/packages/haro/aitracer
